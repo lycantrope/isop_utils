@@ -21,6 +21,7 @@ dev-dependencies = [
     "matplotlib",
     "scikit-image>=0.24.0",
     "ipython>=8.18.1",
+    "ipykernel>=6.29.5",
 ]
 
 [tool.hatch.metadata]

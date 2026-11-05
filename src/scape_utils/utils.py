@@ -19,13 +19,14 @@ import numpy as np
 import tifffile
 
 if TYPE_CHECKING:
-    from typing import Literal, Optional, Tuple, Union
+    from typing import Literal, Tuple, Union
 
     from numpy.typing import NDArray
 
-LUT_TABLE = {
-    "u8": np.floor(np.arange(65536) / 256).astype(np.uint8),
-    "f32": np.linspace(0.0, 1.0, 65536, endpoint=True, dtype=np.float32),
+LUT_TABLE: dict[str, np.ndarray] = {
+    "u1": np.floor(np.arange(65536) / 256).astype(np.uint8),
+    "u2": np.arange(65536),
+    "f4": np.linspace(0.0, 1.0, 65536, endpoint=True, dtype=np.float32),
 }
 
 
@@ -46,10 +47,11 @@ class ScapeImageHeader(NamedTuple):
             raise TypeError(f"Only support (*.3d16 or *.3DU16): {filename.name}")
         try:
             # skip bytes from 0 to 3 and 28-31
-            raw = filename.open("rb").read(52)
-            vals = struct.unpack(">i3d6i", raw)
-            (z_scale, y_scale, x_scale) = vals[1:4]
-            (n_frame, n_channel, depth, height, width) = vals[5:10]
+            with filename.open("rb") as fd:
+                HEADER = fd.read(52)
+            (z_scale, y_scale, x_scale, n_frame, n_channel, depth, height, width) = (
+                struct.unpack(">4x3d4x5i", HEADER)
+            )
         except struct.error as e:
             raise TypeError(f"This file might not be a valid 3DU16 file: {e}")
 
@@ -107,7 +109,7 @@ class ScapeVirtualStack:
     def get_volume(
         self,
         index: int,
-        conversion: Optional[Literal["u8", "f32", "u16"]] = None,
+        dtype: Literal["u1", "f4", "u2"] = "u2",
         imagej: bool = False,
     ) -> Union[NDArray[np.uint8], NDArray[np.uint16], NDArray[np.float32]]:
         T, C, Z, Y, X = self.header.shape
@@ -138,26 +140,25 @@ class ScapeVirtualStack:
             # TCZYX -> TZCYX
             stack = stack.transpose((0, 2, 1, 3, 4))
 
-        if conversion is None:
-            return stack
-
         # type conversion
-        lut = LUT_TABLE.get(conversion)
-        if lut is None:
+        if dtype not in LUT_TABLE:
             warn(
                 UserWarning(
-                    f"Unsupported conversion: {conversion}, output the original format (uint16)"
+                    f"Unsupported conversion: {dtype}, output the original format (uint16)"
                 )
             )
+            dtype = "u2"
+
+        if dtype == "u2":
             return stack
 
-        return lut[stack]
+        return LUT_TABLE[dtype][stack]
 
     def get_multi_volumes(
         self,
         start: int,
         end: int,
-        conversion: Optional[Literal["u8", "f32", "u16"]] = None,
+        dtype: Literal["u1", "f4", "u2"] = "u2",
         imagej: bool = False,
     ) -> Union[NDArray[np.uint8], NDArray[np.uint16], NDArray[np.float32]]:
         T, C, Z, Y, X = self.header.shape
@@ -195,29 +196,27 @@ class ScapeVirtualStack:
             # TCZYX -> TZCYX
             stack = stack.transpose((0, 2, 1, 3, 4))
 
-        if conversion is None or conversion == "u16":
-            return stack
-
         # type conversion
-        lut = LUT_TABLE.get(conversion)
-        if lut is None:
+        if dtype not in LUT_TABLE:
             warn(
                 UserWarning(
-                    f"Unsupported conversion: {conversion}, output the original format (uint16)"
+                    f"Unsupported conversion: {dtype}, output the original format (uint16)"
                 )
             )
+            dtype = "u2"
+
+        if dtype == "u2":
             return stack
 
-        return lut[stack]
+        return LUT_TABLE[dtype][stack]
 
     def save_volume_to_tiff(
         self,
         filename: os.PathLike | str,
         index: int,
-        conversion: Optional[Literal["u8", "f32", "u16"]] = None,
+        dtype: Literal["u1", "f4", "u2"] = "u2",
     ):
-        stack = self.get_volume(index, conversion=conversion, imagej=True)
-        dtype = stack.dtype
+        stack = self.get_volume(index, dtype=dtype, imagej=True)
         z_scale, y_scale, x_scale = self.header.scales
         tifffile.imwrite(
             filename,
@@ -237,17 +236,19 @@ class ScapeVirtualStack:
     def save_all_volumes_to_tiff(
         self,
         filename: os.PathLike | str,
-        conversion: Optional[Literal["u8", "f32", "u16"]] = None,
+        dtype: Literal["u1", "f4", "u2"] = "u2",
         chunksize: int = 10,
     ):
-        dtype = LUT_TABLE.get(conversion, np.array((), dtype=np.uint16)).dtype
+        if dtype not in LUT_TABLE:
+            dtype = "u2"
+
         T, C, Z, Y, X = self.header.shape
 
         def frames():
             for start in range(0, T, chunksize):
                 start = start
                 end = min(start + chunksize - 1, T - 1)
-                stacks = self.get_multi_volumes(start, end, conversion, imagej=True)
+                stacks = self.get_multi_volumes(start, end, dtype, imagej=True)
                 stacks = np.expand_dims(stacks, 0)
                 for stack in stacks:
                     yield stack
@@ -270,10 +271,11 @@ class ScapeVirtualStack:
     def save_all_volumes_to_hdf(
         self,
         filename: os.PathLike | str,
-        conversion: Optional[Literal["u8", "f32", "u16"]] = None,
+        dtype: Literal["u1", "f4", "u2"] = "u2",
         chunksize: int = 10,
     ):
-        dtype = LUT_TABLE.get(conversion, np.array((), dtype=np.uint16)).dtype
+        if dtype not in LUT_TABLE:
+            dtype = "u2"
 
         T, C, Z, Y, X = self.header.shape
 
@@ -282,5 +284,5 @@ class ScapeVirtualStack:
             for start in range(0, T, chunksize):
                 start = start
                 end = min(start + chunksize - 1, T - 1)
-                stacks = self.get_multi_volumes(start, end, conversion, imagej=True)
+                stacks = self.get_multi_volumes(start, end, dtype, imagej=True)
                 dset[start : end + 1, :, :, :, :] = stacks
