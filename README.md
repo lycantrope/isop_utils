@@ -1,4 +1,4 @@
-# Scape Utils
+# ISOP Utils
 
 `scape_utils` is a Python module designed for handling `.3DU16` files, providing tools for reading and manipulating volumetric data. The module includes two main classes: `ScapeVirtualStack` and `ScapeImageDecoder`.
 
@@ -18,11 +18,11 @@ To read a `.3DU16` file, use the `ScapeVirtualStack` class. Below are examples o
 from pathlib import Path
 
 import numpy as np
-from scape_utils import ScapeVirtualStack
+from isop_utils import ISOPVirtualStack
 
 file_path = Path("path/to/your/file.3DU16")
 
-with ScapeVirtualStack(file_path) as stack:
+with ISOPVirtualStack(file_path) as stack:
     # show information
     print(stack)
 
