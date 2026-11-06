@@ -273,7 +273,7 @@ class ISOPVirtualStack:
             },
             photometric="minisblack",
             shape=(T, Z, C, Y, X),
-            dtype=vol0,
+            dtype=vol0.dtype,
         )
 
     def save_all_volumes_to_hdf(
