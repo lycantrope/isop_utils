@@ -19,7 +19,7 @@ import numpy as np
 import tifffile
 
 if TYPE_CHECKING:
-    from typing import Literal, Tuple, Union
+    from typing import Literal
 
     from numpy.typing import NDArray
 
@@ -41,7 +41,7 @@ class ISOPHeader(NamedTuple):
     width: int
 
     @classmethod
-    def from_3DU16(cls, filename: os.PathLike | str) -> "ISOPHeader":
+    def from_3DU16(cls, filename: os.PathLike | str) -> ISOPHeader:
         filename = Path(filename)
         if filename.suffix.lower() != ".3du16":
             raise TypeError(f"Only support (*.3d16 or *.3DU16): {filename.name}")
@@ -75,12 +75,12 @@ class ISOPHeader(NamedTuple):
         return self.pixels_per_volume * 2 + gap
 
     @property
-    def shape(self) -> Tuple[int, int, int, int, int]:
+    def shape(self) -> tuple[int, int, int, int, int]:
         # TCZYX
         return (self.n_frame, self.n_channel, self.depth, self.height, self.width)
 
     @property
-    def scales(self) -> Tuple[float, float, float]:
+    def scales(self) -> tuple[float, float, float]:
         # z, y, x
         return (self.z_scale, self.y_scale, self.x_scale)
 
@@ -119,7 +119,7 @@ class ISOPVirtualStack:
         index: int,
         dtype: Literal["u1", "f4", "u2"] = "u2",
         imagej: bool = False,
-    ) -> Union[NDArray[np.uint8], NDArray[np.uint16], NDArray[np.float32]]:
+    ) -> NDArray[np.uint8] | NDArray[np.uint16] | NDArray[np.float32]:
         if self.raf is None:
             raise RuntimeError(
                 f"Please run {self.__class__.__name__} under the 'with statement'"
@@ -172,7 +172,7 @@ class ISOPVirtualStack:
         end: int,
         dtype: Literal["u1", "f4", "u2"] = "u2",
         imagej: bool = False,
-    ) -> Union[NDArray[np.uint8], NDArray[np.uint16], NDArray[np.float32]]:
+    ) -> NDArray[np.uint8] | NDArray[np.uint16] | NDArray[np.float32]:
         if self.raf is None:
             raise RuntimeError(
                 f"Please run {self.__class__.__name__} under the 'with statement'"
@@ -256,12 +256,10 @@ class ISOPVirtualStack:
 
         def frames():
             for start in range(0, T, chunksize):
-                start = start
                 end = min(start + chunksize - 1, T - 1)
                 stacks = self.get_multi_volumes(start, end, dtype, imagej=True)
                 stacks = np.expand_dims(stacks, 0)
-                for stack in stacks:
-                    yield stack
+                yield from stacks
 
         tifffile.imwrite(
             filename,
@@ -302,7 +300,6 @@ class ISOPVirtualStack:
                 ),
             )
             for start in range(0, T, chunksize):
-                start = start
                 end = min(start + chunksize - 1, T - 1)
                 stacks = self.get_multi_volumes(start, end, dtype, imagej=True)
                 dset[start : end + 1, :, :, :, :] = stacks
