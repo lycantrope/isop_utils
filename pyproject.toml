@@ -12,9 +12,8 @@ urls = { github = "https://github.com/lycantrope/scape_utils" }
 requires = ["uv_build>=0.9.11,<0.10.0"]
 build-backend = "uv_build"
 
-[tool.uv]
-managed = true
-dev-dependencies = ["ruff", "pytest"]
+[dependency-groups]
+dev = ["ruff", "pytest"]
 
 [tool.ruff.lint]
 extend-select = ["I001"]
