@@ -1,34 +1,20 @@
 [project]
-name = "scape-utils"
+name = "isop-utils"
 version = "0.1.0"
-description = "A simple package to read SCAPE 3D image (3DU16)"
+description = "A simple package to read ISOP 3D image (3DU16)"
 authors = [{ name = "Chung-Kuan Chen", email = "b97b01045@gmail.com" }]
-dependencies = ["numpy<2.0.0", "attrs", "tifffile", "h5py"]
+dependencies = ["numpy", "attrs", "tifffile", "h5py", "hdf5plugin"]
 readme = "README.md"
-requires-python = ">= 3.9"
+requires-python = ">= 3.10"
 urls = { github = "https://github.com/lycantrope/scape_utils" }
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.9.11,<0.10.0"]
+build-backend = "uv_build"
 
 [tool.uv]
 managed = true
-dev-dependencies = [
-    "ruff>=0.5.1",
-    "pytest>=8.2.2",
-    "roifile[all]",
-    "matplotlib",
-    "scikit-image>=0.24.0",
-    "ipython>=8.18.1",
-    "ipykernel>=6.29.5",
-]
-
-[tool.hatch.metadata]
-allow-direct-references = true
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/scape_utils"]
+dev-dependencies = ["ruff", "pytest"]
 
 [tool.ruff.lint]
 extend-select = ["I001"]
