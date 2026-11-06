@@ -15,6 +15,7 @@ from warnings import warn
 
 import attrs
 import h5py
+import hdf5plugin
 import numpy as np
 import tifffile
 
@@ -49,13 +50,13 @@ class ScapeImageHeader(NamedTuple):
             # skip bytes from 0 to 3 and 28-31
             with filename.open("rb") as fd:
                 HEADER = fd.read(52)
-            (z_scale, y_scale, x_scale, n_frame, n_channel, depth, height, width) = (
-                struct.unpack(">4x3d4x5i", HEADER)
+            (z_scale, y_scale, x_scale, T, C, Z, Y, X) = struct.unpack(
+                ">4x3d4x5i", HEADER
             )
         except struct.error as e:
             raise TypeError(f"This file might not be a valid 3DU16 file: {e}")
 
-        return cls(x_scale, y_scale, z_scale, n_frame, n_channel, depth, height, width)
+        return cls(x_scale, y_scale, z_scale, T, C, Z, Y, X)
 
     @property
     def bytes_per_xy(self) -> int:
@@ -63,16 +64,16 @@ class ScapeImageHeader(NamedTuple):
 
     @property
     def bytes_per_xyz(self) -> int:
-        return self.height * self.width * 2 * self.depth
+        return self.height * self.width * self.depth * 2
+
+    @property
+    def pixels_per_volume(self) -> int:
+        return self.height * self.width * self.depth * self.n_channel
 
     @property
     def bytes_per_volume(self) -> int:
         gap = 16
         return self.pixels_per_volume * 2 + gap
-
-    @property
-    def pixels_per_volume(self) -> int:
-        return self.height * self.width * self.depth * self.n_channel
 
     @property
     def shape(self) -> Tuple[int, int, int, int, int]:
@@ -122,15 +123,12 @@ class ScapeVirtualStack:
 
         gap = 16
         offset = 52 + index * bytes_per_volume
-        raw = self.raf[offset + gap : offset + bytes_per_volume]
-
-        # newbyteorder is not inplace reassign is required.
-        dt = np.dtype("u2").newbyteorder(">")
 
         stack = np.frombuffer(
-            raw,
-            dtype=dt,
+            self.raf,
+            dtype=">u2",
             count=pixels_per_volume,
+            offset=offset + gap,
         ).reshape((C, Z, Y, X))
 
         # CZYX -> TCZYX
@@ -180,13 +178,10 @@ class ScapeVirtualStack:
 
         raw = self.raf[offset : offset + bytes_per_volume * T]
 
-        # newbyteorder is not inplace reassign is required.
-        dt = np.dtype("u2").newbyteorder(">")
-
         stack = (
             np.frombuffer(
                 raw,
-                dtype=dt,
+                dtype=">u2",
             )
             .reshape((T, -1))[:, gap // 2 :]
             .reshape((T, C, Z, Y, X))
@@ -280,7 +275,17 @@ class ScapeVirtualStack:
         T, C, Z, Y, X = self.header.shape
 
         with h5py.File(filename, "w") as f:
-            dset = f.create_dataset("data", (T, Z, C, Y, X), dtype, compression="lzf")
+            dset = f.create_dataset(
+                "data",
+                shape=(T, Z, C, Y, X),
+                dtype=dtype,
+                chunk=(1, Z, C, Y, X),
+                **hdf5plugin.Blosc(
+                    cname="zstd",
+                    clevel=5,
+                    shuffle=hdf5plugin.Blosc.BITSHUFFLE,
+                ),
+            )
             for start in range(0, T, chunksize):
                 start = start
                 end = min(start + chunksize - 1, T - 1)
