@@ -1,19 +1,18 @@
 from __future__ import annotations
 
 __all__ = [
-    "ScapeImageHeader",
-    "ScapeVirtualStack",
+    "ISOPHeader",
+    "ISOPVirtualStack",
 ]
 
 import mmap
 import os
 import struct
-from io import BufferedReader
+from contextlib import ExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 from warnings import warn
 
-import attrs
 import h5py
 import hdf5plugin
 import numpy as np
@@ -31,7 +30,7 @@ LUT_TABLE: dict[str, np.ndarray] = {
 }
 
 
-class ScapeImageHeader(NamedTuple):
+class ISOPHeader(NamedTuple):
     x_scale: float
     y_scale: float
     z_scale: float
@@ -42,7 +41,7 @@ class ScapeImageHeader(NamedTuple):
     width: int
 
     @classmethod
-    def from_3DU16(cls, filename: os.PathLike | str) -> "ScapeImageHeader":
+    def from_3DU16(cls, filename: os.PathLike | str) -> "ISOPHeader":
         filename = Path(filename)
         if filename.suffix.lower() != ".3du16":
             raise TypeError(f"Only support (*.3d16 or *.3DU16): {filename.name}")
@@ -86,26 +85,34 @@ class ScapeImageHeader(NamedTuple):
         return (self.z_scale, self.y_scale, self.x_scale)
 
 
-@attrs.define
-class ScapeVirtualStack:
-    filepath: Path
-    header: ScapeImageHeader = attrs.field(init=False)
+class ISOPVirtualStack:
+    def __init__(self, filepath: os.PathLike):
+        self.filepath = Path(filepath)
+        self.header = ISOPHeader.from_3DU16(self.filepath)
 
-    raf: mmap.mmap = attrs.field(init=False, default=None, repr=False)
-    handler: BufferedReader = attrs.field(init=False, default=None, repr=False)
+        self.raf = None
+        self.handler = None
 
-    def __attrs_post_init__(self):
-        self.filepath = Path(self.filepath)
-        self.header = ScapeImageHeader.from_3DU16(self.filepath)
+        self._cleanup = ExitStack()
+
+    def __repr__(self) -> str:
+        return f"ISOPVitrualStack(filepath={self.filepath!s}, header={self.header!s})"
 
     def __enter__(self):
-        self.handler = open(self.filepath, "rb")
-        self.raf = mmap.mmap(self.handler.fileno(), 0, access=mmap.ACCESS_READ)
+        self._cleanup.__enter__()
+        try:
+            self.handler = self._cleanup.enter_context(open(self.filepath, "rb"))
+            self.raf = self._cleanup.enter_context(
+                mmap.mmap(self.handler.fileno(), 0, access=mmap.ACCESS_READ)
+            )
+        except Exception:
+            # もし初期化の途中でエラーが起きたら、開いた分を即座にクリーンアップして例外を再送
+            self._cleanup.__exit__(None, None, None)
+            raise
         return self
 
-    def __exit__(self, *args):
-        self.raf.close()
-        self.handler.close()
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return self._cleanup.__exit__(exc_type, exc_val, exc_tb)
 
     def get_volume(
         self,
@@ -113,8 +120,11 @@ class ScapeVirtualStack:
         dtype: Literal["u1", "f4", "u2"] = "u2",
         imagej: bool = False,
     ) -> Union[NDArray[np.uint8], NDArray[np.uint16], NDArray[np.float32]]:
+        if self.raf is None:
+            raise RuntimeError(
+                f"Please run {self.__class__.__name__} under the 'with statement'"
+            )
         T, C, Z, Y, X = self.header.shape
-
         bytes_per_volume = self.header.bytes_per_volume
         pixels_per_volume = self.header.pixels_per_volume
 
@@ -124,12 +134,16 @@ class ScapeVirtualStack:
         gap = 16
         offset = 52 + index * bytes_per_volume
 
-        stack = np.frombuffer(
-            self.raf,
-            dtype=">u2",
-            count=pixels_per_volume,
-            offset=offset + gap,
-        ).reshape((C, Z, Y, X))
+        stack = (
+            np.frombuffer(
+                self.raf,
+                dtype=">u2",
+                count=pixels_per_volume,
+                offset=offset + gap,
+            )
+            .reshape((C, Z, Y, X))
+            .copy()
+        )
 
         # CZYX -> TCZYX
         stack = stack[np.newaxis, :, :, :, :]
@@ -159,6 +173,10 @@ class ScapeVirtualStack:
         dtype: Literal["u1", "f4", "u2"] = "u2",
         imagej: bool = False,
     ) -> Union[NDArray[np.uint8], NDArray[np.uint16], NDArray[np.float32]]:
+        if self.raf is None:
+            raise RuntimeError(
+                f"Please run {self.__class__.__name__} under the 'with statement'"
+            )
         T, C, Z, Y, X = self.header.shape
         bytes_per_volume = self.header.bytes_per_volume
 
@@ -176,15 +194,16 @@ class ScapeVirtualStack:
         gap = 16
         offset = 52 + start * bytes_per_volume
 
-        raw = self.raf[offset : offset + bytes_per_volume * T]
-
         stack = (
             np.frombuffer(
-                raw,
+                self.raf,
                 dtype=">u2",
+                count=(bytes_per_volume * T) // 2,
+                offset=offset,
             )
             .reshape((T, -1))[:, gap // 2 :]
             .reshape((T, C, Z, Y, X))
+            .copy()
         )
 
         if imagej:
@@ -217,8 +236,6 @@ class ScapeVirtualStack:
             filename,
             stack,
             imagej=True,
-            shape=stack.shape,
-            dtype=dtype,
             resolution=(1.0 / x_scale, 1.0 / y_scale),
             metadata={
                 "spacing": z_scale,
@@ -234,10 +251,8 @@ class ScapeVirtualStack:
         dtype: Literal["u1", "f4", "u2"] = "u2",
         chunksize: int = 10,
     ):
-        if dtype not in LUT_TABLE:
-            dtype = "u2"
-
         T, C, Z, Y, X = self.header.shape
+        vol0 = self.get_volume(0, dtype=dtype, imagej=True)
 
         def frames():
             for start in range(0, T, chunksize):
@@ -260,7 +275,7 @@ class ScapeVirtualStack:
             },
             photometric="minisblack",
             shape=(T, Z, C, Y, X),
-            dtype=dtype,
+            dtype=vol0,
         )
 
     def save_all_volumes_to_hdf(
@@ -279,7 +294,7 @@ class ScapeVirtualStack:
                 "data",
                 shape=(T, Z, C, Y, X),
                 dtype=dtype,
-                chunk=(1, Z, C, Y, X),
+                chunks=(1, Z, C, Y, X),
                 **hdf5plugin.Blosc(
                     cname="zstd",
                     clevel=5,
