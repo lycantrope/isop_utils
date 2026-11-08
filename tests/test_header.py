@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from isop_utils import ISOPVirtualStack, save_all_volumes_to_tiff
+from isop_utils import ISOPVirtualStack, isop_3du16_to_tiff
 
 T, C, Z, Y, X = 31, 2, 3, 5, 7
 
@@ -85,4 +85,4 @@ def test_save_all_volume(file: Path):
     test_out.mkdir(exist_ok=True)
     out = test_out.joinpath(file.stem + ".tif")
     stack = ISOPVirtualStack(file)
-    save_all_volumes_to_tiff(stack, out)
+    isop_3du16_to_tiff(stack, out)
