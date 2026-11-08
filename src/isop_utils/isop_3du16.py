@@ -13,7 +13,7 @@ Example
 >>> vs = ISOPVirtualStack("sample.3DU16")
 >>> vs.shape                 # (T, C, Z, Y, X)
 >>> vol = vs.volume(0)       # native uint16 copy, (C, Z, Y, X)
->>> save_all_volumes_to_tiff(vs, "sample.tif")
+>>> isop_3du16_to_tiff(vs, "sample.tif")
 """
 
 from __future__ import annotations
