@@ -86,11 +86,11 @@ class ISOPVirtualStack:
             raw = f.read(self._GLOBAL_HEADER)
         try:
             # skip bytes 0-3 and 28-31
-            z, y, x, T, C, Z, Y, X = struct.unpack(">4x3d4x5i", raw)
+            scale_z, scale_y, scale_x, T, C, Z, Y, X = struct.unpack(">4x3d4x5i", raw)
         except struct.error as e:
             raise ValueError(f"Not a valid 3DU16 file: {self.filepath}") from e
 
-        self.scales = (z, y, x)
+        self.scales = (scale_z, scale_y, scale_x)
         self.shape = (T, C, Z, Y, X)
 
         record = np.dtype(
