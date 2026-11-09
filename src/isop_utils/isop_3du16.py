@@ -65,19 +65,20 @@ class ISOPVirtualStack:
     There is no ``close()``. The mapping is released automatically once
     this object and every array taken from it have been garbage-collected,
     so returned arrays stay valid after the reader is gone.
+    Instances are immutable after construction and safe to share between threads.
+    They can also be passed to other processes; see __reduce__.
     """
 
     _GLOBAL_HEADER: Final = 52
     """Bytes before the first volume record."""
 
     _VOL_HEADER: Final = 16
-    """Bytes of header before each volume (4 x big-endian uint32)."""
+    """Bytes of header before each volume (4 x big-endian int32)."""
 
     filepath: Path
     shape: tuple[int, int, int, int, int]
     scales: tuple[float, float, float]
     data: NDArray[np.uint16]
-    volume_headers: NDArray[np.uint32]
 
     def __init__(self, filepath: os.PathLike[str] | str) -> None:
         self.filepath = Path(filepath).resolve()
@@ -93,9 +94,14 @@ class ISOPVirtualStack:
         self.scales = (scale_z, scale_y, scale_x)
         self.shape = (T, C, Z, Y, X)
 
+        if min(self.shape) < 1:
+            raise ValueError(
+                f"Invalid slice size {T}x{C}x{Z}x{Y}x{X} in header: {self.filepath}"
+            )
+
         record = np.dtype(
             [
-                ("hdr", ">u4", (self._VOL_HEADER // 4,)),
+                ("hdr", ">i4", (self._VOL_HEADER // 4,)),
                 ("data", ">u2", (C, Z, Y, X)),
             ]
         )
@@ -113,8 +119,10 @@ class ISOPVirtualStack:
             offset=self._GLOBAL_HEADER,
             shape=(T,),
         )
+        if not (mm["hdr"] == (C, Z, Y, X)).all():
+            raise ValueError(f"Volumes have different sizes: {self.filepath}")
+
         self.data = mm["data"]
-        self.volume_headers = mm["hdr"]
 
     def __repr__(self) -> str:
         return (
