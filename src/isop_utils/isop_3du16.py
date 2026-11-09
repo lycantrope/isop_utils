@@ -80,7 +80,7 @@ class ISOPVirtualStack:
     volume_headers: NDArray[np.uint32]
 
     def __init__(self, filepath: os.PathLike[str] | str) -> None:
-        self.filepath = Path(filepath)
+        self.filepath = Path(filepath).resolve()
 
         with self.filepath.open("rb") as f:
             raw = f.read(self._GLOBAL_HEADER)
@@ -121,6 +121,10 @@ class ISOPVirtualStack:
             f"ISOPVirtualStack({str(self.filepath)!r}, "
             f"shape={self.shape}, scales={self.scales})"
         )
+
+    def __reduce__(self) -> tuple[type[ISOPVirtualStack], tuple[str]]:
+        # Pickle only the path; the receiving process re-parses the header and re-maps.
+        return (self.__class__, (str(self.filepath),))
 
     def __len__(self) -> int:
         """Number of time points ``T``."""
